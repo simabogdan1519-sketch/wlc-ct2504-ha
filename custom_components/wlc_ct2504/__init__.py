@@ -18,7 +18,7 @@ from .const import (
     DEFAULT_COMMUNITY,
 )
 from .coordinator import WlcDataCoordinator
-from .snmp_client import SnmpClient, warmup
+from .snmp_client import SnmpClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,8 +39,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     client = SnmpClient(host, community, port)
 
-    # Warm up puresnmp plugin cache in executor (avoids blocking event loop)
-    await warmup()
 
     # Quick connectivity check
     if not await client.test_connection():

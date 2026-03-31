@@ -25,7 +25,7 @@ from .const import (
     SNMP_VERSION_2C,
     SNMP_VERSION_OPTIONS,
 )
-from .snmp_client import SnmpClient, warmup
+from .snmp_client import SnmpClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,8 +71,6 @@ class WlcConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._abort_if_unique_id_configured()
 
             # Test SNMP connectivity
-            # Warm up puresnmp plugin cache before any SNMP call
-            await warmup()
 
             client = SnmpClient(host, community, port)
             try:
