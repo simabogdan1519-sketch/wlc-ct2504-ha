@@ -1,37 +1,57 @@
 """SNMP client for Cisco WLC CT2504 — built on puresnmp.
 
-Replaces pysnmp which has multiple breaking changes on Python 3.14 / HA 2024+:
-  - UdpTransportTarget() constructor removed (must use await .create())
-  - .create() raises NotImplementedError on _resolve_address in HA event loop
-  - Blocking MIB I/O on SnmpEngine() init
+puresnmp loads plugins via importlib.import_module + os.listdir on the
+FIRST Client() instantiation only. After that the results are cached in
+the Loader object and subsequent Client() calls are instant.
 
-puresnmp is a clean async-native SNMP v2c library with no MIB loading,
-no event loop issues, and straightforward value extraction.
+HA's event loop detects these blocking calls, so we must run the first
+instantiation in an executor to warm the cache before any async code
+calls Client() directly.
+
+Call `await SnmpClient.warmup()` once at integration setup. After that
+all Client() calls inside async methods are safe (cache hit, no I/O).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from ipaddress import ip_address
+from socket import gethostbyname
 from typing import Any
 
 from puresnmp import Client
 from puresnmp.credentials import V2C
 from puresnmp.exc import NoSuchOID, Timeout, SnmpError
-from x690.types import OctetString, Integer, ObjectIdentifier
 
 _LOGGER = logging.getLogger(__name__)
+_WARMED_UP = False
+
+
+def _warmup_sync() -> None:
+    """Run in executor: instantiate one Client to trigger plugin discovery."""
+    Client("127.0.0.1", V2C("public"))
+
+
+async def warmup() -> None:
+    """Pre-warm puresnmp plugin cache in executor (call once at HA startup)."""
+    global _WARMED_UP
+    if _WARMED_UP:
+        return
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _warmup_sync)
+    _WARMED_UP = True
+    _LOGGER.debug("puresnmp plugin cache warmed up")
 
 
 def _to_str(val: Any) -> str | None:
     """Convert a puresnmp/x690 value to a plain Python string."""
     if val is None:
         return None
-    # x690 types all have .pythonize() or .value
     raw = val.pythonize() if hasattr(val, "pythonize") else val
     if isinstance(raw, bytes):
-        # Try UTF-8, fall back to hex representation
         try:
             decoded = raw.decode("utf-8").strip()
-            # If it looks like a hex dump (non-printable), return hex
+            # reject strings with non-printable control chars (except \r\n\t)
             if any(ord(c) < 32 and c not in "\r\n\t" for c in decoded):
                 return raw.hex()
             return decoded
@@ -43,7 +63,7 @@ def _to_str(val: Any) -> str | None:
 
 
 class SnmpClient:
-    """Async SNMP v2c client — uses puresnmp (Python 3.14 / HA compatible)."""
+    """Async SNMP v2c client — puresnmp, HA / Python 3.14 compatible."""
 
     def __init__(
         self,
@@ -60,6 +80,7 @@ class SnmpClient:
         self._retries = retries
 
     def _client(self) -> Client:
+        """Return a Client instance. Plugin cache must already be warm."""
         return Client(
             self._host,
             V2C(self._community),
@@ -67,10 +88,9 @@ class SnmpClient:
         )
 
     async def get(self, oid: str) -> str | None:
-        """GET a single OID. Returns string or None."""
-        client = self._client()
+        """GET single OID. Returns string or None."""
         try:
-            val = await client.get(oid)
+            val = await self._client().get(oid)
             return _to_str(val)
         except NoSuchOID:
             return None
@@ -85,16 +105,12 @@ class SnmpClient:
             return None
 
     async def get_many(self, oids: list[str]) -> dict[str, str | None]:
-        """GET multiple OIDs in one request (multiget)."""
+        """GET multiple OIDs in one request."""
         if not oids:
             return {}
-        client = self._client()
         try:
-            results = await client.multiget(oids)
-            return {
-                oid: _to_str(val)
-                for oid, val in zip(oids, results)
-            }
+            results = await self._client().multiget(oids)
+            return {oid: _to_str(val) for oid, val in zip(oids, results)}
         except Timeout:
             _LOGGER.debug("SNMP multiget timeout [%s]", self._host)
             return {oid: None for oid in oids}
@@ -106,12 +122,11 @@ class SnmpClient:
             return {oid: None for oid in oids}
 
     async def walk(self, base_oid: str) -> dict[str, str]:
-        """SNMP walk. Returns {suffix: value} where suffix follows base_oid."""
-        client = self._client()
+        """SNMP walk. Returns {suffix: value}."""
         results: dict[str, str] = {}
         prefix = base_oid + "."
         try:
-            async for oid, val in client.walk(base_oid):
+            async for oid, val in self._client().walk(base_oid):
                 oid_str = str(oid)
                 val_str = _to_str(val)
                 if val_str is None:
