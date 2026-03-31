@@ -26,7 +26,7 @@ from .const import (
     SNMP_VERSION_OPTIONS,
 )
 from .snmp_client import SnmpClient
-from .coordinator import WlcDataCoordinator
+from .coordinator import WlcDataCoordinator, mac_suffix_to_display
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ class WlcConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._port: int = DEFAULT_PORT
         self._name: str = DEFAULT_NAME
         self._ap_indexes: list[str] = []
+        self._ap_names: list[str] = []
         self._ssid_indexes: list[int] = []
 
     async def async_step_user(
@@ -87,6 +88,9 @@ class WlcConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                     coordinator = WlcDataCoordinator(self.hass, client)
                     self._ap_indexes, self._ssid_indexes = await coordinator.discover()
+                    # fetch names for display in discovery step
+                    await coordinator.async_refresh()
+                    self._ap_names = [coordinator.data.get("aps",{}).get(s,{}).get("name", mac_suffix_to_display(s)) for s in self._ap_indexes] if coordinator.data else [mac_suffix_to_display(s) for s in self._ap_indexes]
 
                     if not self._ap_indexes:
                         errors["base"] = "no_aps_found"
@@ -129,9 +133,10 @@ class WlcConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="discovery",
             data_schema=vol.Schema({}),
             description_placeholders={
+                "name":       self._name,
                 "ap_count":   str(len(self._ap_indexes)),
                 "ssid_count": str(len(self._ssid_indexes)),
-                "ap_list":    ", ".join(str(i) for i in self._ap_indexes[:5]) + ("..." if len(self._ap_indexes) > 5 else ""),
+                "ap_list":    ", ".join(self._ap_names[:5]) + ("..." if len(self._ap_names) > 5 else ""),
                 "ssid_list":  ", ".join(f"WLAN-{i}" for i in self._ssid_indexes),
             },
         )
