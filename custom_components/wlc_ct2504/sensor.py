@@ -180,10 +180,13 @@ async def async_setup_entry(
         )
 
     # ── Per-AP sensors ────────────────────────────────────────
-    for ap_idx in coordinator.ap_indexes:
-        ap_name = f"AP-{ap_idx}"
+    for ap_suffix in coordinator.ap_indexes:
+        # Get friendly name from coordinator data if available
+        ap_data = {}
         if coordinator.data:
-            ap_name = coordinator.data.get("aps", {}).get(ap_idx, {}).get("name", f"AP-{ap_idx}")
+            ap_data = coordinator.data.get("aps", {}).get(ap_suffix, {})
+        ap_name = ap_data.get("name") or f"AP-{ap_suffix}"
+        ap_slug = ap_data.get("slug") or f"ap_{ap_suffix.replace('.', '_')}"
 
         for key, label, icon, unit in [
             ("status",  "Status",       "mdi:access-point",      None),
@@ -196,9 +199,9 @@ async def async_setup_entry(
             entities.append(
                 WlcApSensor(
                     coordinator=coordinator,
-                    ap_idx=ap_idx,
+                    ap_idx=ap_suffix,
                     data_key=key,
-                    entity_key=f"ap_{ap_idx}_{key}",
+                    entity_key=f"{ap_slug}_{key}",
                     name=f"{ap_name} {label}",
                     icon=icon,
                     unit=unit,
@@ -308,7 +311,7 @@ class WlcApSensor(WlcBaseEntity):
     def __init__(
         self,
         coordinator: WlcDataCoordinator,
-        ap_idx: int,
+        ap_idx: str,          # MAC suffix string e.g. '0.167.66.179.98.192'
         data_key: str,
         entity_key: str,
         name: str,

@@ -26,6 +26,7 @@ from .const import (
     SNMP_VERSION_OPTIONS,
 )
 from .snmp_client import SnmpClient
+from .coordinator import WlcDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class WlcConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._community: str = DEFAULT_COMMUNITY
         self._port: int = DEFAULT_PORT
         self._name: str = DEFAULT_NAME
-        self._ap_indexes: list[int] = []
+        self._ap_indexes: list[str] = []
         self._ssid_indexes: list[int] = []
 
     async def async_step_user(
@@ -84,11 +85,6 @@ class WlcConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._port      = port
                     self._name      = name
 
-                    ap_indexes, ssid_indexes = await client.discover() if hasattr(client, "discover") else ([], [])
-
-                    # Use coordinator's discover instead
-                    from .coordinator import WlcDataCoordinator
-                    coordinator = WlcDataCoordinator(self.hass, client)
                     self._ap_indexes, self._ssid_indexes = await coordinator.discover()
 
                     if not self._ap_indexes:
@@ -134,7 +130,7 @@ class WlcConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "ap_count":   str(len(self._ap_indexes)),
                 "ssid_count": str(len(self._ssid_indexes)),
-                "ap_list":    ", ".join(f"AP-{i}" for i in self._ap_indexes),
+                "ap_list":    ", ".join(str(i) for i in self._ap_indexes[:5]) + ("..." if len(self._ap_indexes) > 5 else ""),
                 "ssid_list":  ", ".join(f"WLAN-{i}" for i in self._ssid_indexes),
             },
         )

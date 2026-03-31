@@ -1,4 +1,13 @@
-"""DataUpdateCoordinator for Cisco WLC CT2504."""
+"""DataUpdateCoordinator for Cisco WLC CT2504.
+
+NOTE on AP indexes:
+  The CT2504 uses the AP's MAC address as the SNMP table index,
+  encoded as 6 decimal octets separated by dots.
+  Example: '0.167.66.179.98.192' = MAC 00:A7:42:B3:62:C0
+
+  We store these MAC-suffix strings as AP keys throughout.
+  For entity/sensor naming we convert to a safe slug: mac_00a742b362c0
+"""
 from __future__ import annotations
 
 import asyncio
@@ -23,24 +32,38 @@ from .const import (
     OID_AP_NAME, OID_AP_STATUS, OID_AP_MODEL, OID_AP_IP, OID_AP_CLIENTS,
     OID_AP_CHANNEL, OID_AP_TXPOWER, OID_AP_CLIENTS_RADIO,
     OID_SSID_NAME, OID_SSID_CLIENTS, OID_SSID_VLAN,
-    OID_SSID_SECURITY, OID_SSID_BAND, OID_SSID_STATUS,
+    OID_SSID_SECURITY, OID_SSID_BAND,
 )
 from .snmp_client import SnmpClient
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _parse_firmware(sys_descr: str) -> str:
-    """Extract firmware version from sysDescr string.
+# ── HELPERS ───────────────────────────────────────────────────────────────────
 
-    HA states are limited to 255 chars. sysDescr is multiline and often
-    several hundred bytes — always extract just the version number.
-    The raw value may arrive as a hex string (0x...) from pysnmp when
-    the OctetString contains non-ASCII bytes (CRLF etc.).
-    """
+def mac_suffix_to_slug(suffix: str) -> str:
+    """Convert '0.167.66.179.98.192' → 'mac_00a742b362c0' (safe entity slug)."""
+    try:
+        octets = [int(x) for x in suffix.split('.')]
+        return 'mac_' + ''.join(f'{o:02x}' for o in octets)
+    except Exception:
+        # fallback: replace dots with underscores
+        return 'ap_' + suffix.replace('.', '_')
+
+
+def mac_suffix_to_display(suffix: str) -> str:
+    """Convert '0.167.66.179.98.192' → '00:A7:42:B3:62:C0' (human readable)."""
+    try:
+        octets = [int(x) for x in suffix.split('.')]
+        return ':'.join(f'{o:02X}' for o in octets)
+    except Exception:
+        return suffix
+
+
+def _parse_firmware(sys_descr: str) -> str:
+    """Extract firmware version string from sysDescr, max 50 chars."""
     if not sys_descr:
         return "Unknown"
-    # pysnmp sometimes returns hex-encoded strings starting with 0x
     if sys_descr.startswith("0x"):
         try:
             sys_descr = bytes.fromhex(sys_descr[2:]).decode("ascii", errors="replace")
@@ -48,17 +71,13 @@ def _parse_firmware(sys_descr: str) -> str:
             pass
     match = re.search(r"Version\s+([\d.]+)", sys_descr)
     if match:
-        return match.group(1)[:50]  # version string only, max 50 chars
-    # Fallback: first non-empty line, truncated
-    first_line = sys_descr.split("\n")[0].strip()[:50]
-    return first_line or "Unknown"
+        return match.group(1)[:50]
+    return sys_descr.split("\n")[0].strip()[:50] or "Unknown"
 
 
 def _parse_uptime(ticks_str: str) -> dict:
-    """Convert SNMP TimeTicks (centiseconds) to human readable + seconds."""
     try:
-        ticks = int(ticks_str)
-        secs = ticks // 100
+        secs = int(ticks_str) // 100
     except (ValueError, TypeError):
         return {"raw": ticks_str, "seconds": 0, "formatted": "—"}
     d = secs // 86400
@@ -82,6 +101,8 @@ def _safe_float(val: str | None, default: float = 0.0) -> float:
         return default
 
 
+# ── COORDINATOR ───────────────────────────────────────────────────────────────
+
 class WlcDataCoordinator(DataUpdateCoordinator):
     """Fetches and caches all WLC SNMP data."""
 
@@ -91,7 +112,7 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         client: SnmpClient,
         scan_interval: int = DEFAULT_SCAN_INTERVAL,
         scan_interval_clients: int = 15,
-        ap_indexes: list[int] | None = None,
+        ap_indexes: list[str] | None = None,   # MAC-suffix strings
         ssid_indexes: list[int] | None = None,
     ) -> None:
         super().__init__(
@@ -103,14 +124,14 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         self._client = client
         self._scan_interval = scan_interval
         self._scan_interval_clients = scan_interval_clients
-        self._ap_indexes: list[int] = ap_indexes or []
+        self._ap_indexes: list[str] = ap_indexes or []
         self._ssid_indexes: list[int] = ssid_indexes or []
         self._slow_counter = 0
 
-    # ── DISCOVERY ────────────────────────────────────────────────
+    # ── DISCOVERY ─────────────────────────────────────────────────
 
-    async def discover(self) -> tuple[list[int], list[int]]:
-        """Walk AP and SSID tables to find all indexes. Returns (ap_indexes, ssid_indexes)."""
+    async def discover(self) -> tuple[list[str], list[int]]:
+        """Walk AP and SSID tables. Returns (ap_mac_suffixes, ssid_int_indexes)."""
         _LOGGER.info("WLC: Starting SNMP discovery...")
 
         ap_names, ssid_names = await asyncio.gather(
@@ -118,18 +139,19 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             self._client.walk(OID_SSID_NAME),
         )
 
-        # AP indexes: suffix is just the integer index
-        ap_indexes = sorted(
-            [int(k) for k in ap_names if k.isdigit()],
-        )
+        _LOGGER.debug("WLC raw AP walk result: %s", ap_names)
+        _LOGGER.debug("WLC raw SSID walk result: %s", ssid_names)
 
-        # SSID indexes
-        ssid_indexes = sorted(
-            [int(k) for k in ssid_names if k.isdigit()],
+        # AP suffixes: accept any non-empty key (MAC-encoded or integer)
+        ap_indexes: list[str] = [k for k in ap_names if k]
+
+        # SSID suffixes: integer WLAN IDs
+        ssid_indexes: list[int] = sorted(
+            [int(k) for k in ssid_names if k.isdigit()]
         )
 
         _LOGGER.info(
-            "WLC discovery: found %d APs %s, %d SSIDs %s",
+            "WLC discovery: %d APs found: %s | %d SSIDs: %s",
             len(ap_indexes), ap_indexes,
             len(ssid_indexes), ssid_indexes,
         )
@@ -138,180 +160,143 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         self._ssid_indexes = ssid_indexes
         return ap_indexes, ssid_indexes
 
-    # ── MAIN UPDATE ──────────────────────────────────────────────
+    # ── MAIN UPDATE ───────────────────────────────────────────────
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch all data from WLC via SNMP."""
         self._slow_counter += 1
         do_slow = (self._slow_counter % max(1, self._scan_interval // 15)) == 0
-
         try:
-            data = await self._fetch_all(do_slow)
+            return await self._fetch_all(do_slow)
         except Exception as err:
             raise UpdateFailed(f"WLC SNMP error: {err}") from err
 
-        return data
-
     async def _fetch_all(self, do_slow: bool) -> dict[str, Any]:
-        # ── Fast OIDs (every poll) ────────────────────────────
-        fast_oids = [
-            OID_CPU,
-            OID_MEM_FREE,
-            OID_MEM_TOTAL,
-            OID_TEMPERATURE,
-            OID_CLIENTS_TOTAL,
-        ]
-
-        # ── Slow OIDs (every ~5min) ───────────────────────────
-        slow_oids = [
-            OID_SYS_DESCR,
-            OID_SYS_UPTIME,
-            OID_SYS_NAME,
-            OID_SERIAL,
-            OID_FLASH,
-            OID_MGMT_IP,
-            OID_AP_MGR_IP,
-            OID_RF_COUNTRY,
-            OID_CAPWAP,
-        ]
-
+        # ── Fast system OIDs ──────────────────────────────────
+        fast_oids = [OID_CPU, OID_MEM_FREE, OID_MEM_TOTAL, OID_TEMPERATURE, OID_CLIENTS_TOTAL]
+        slow_oids = [OID_SYS_DESCR, OID_SYS_UPTIME, OID_SYS_NAME, OID_SERIAL,
+                     OID_FLASH, OID_MGMT_IP, OID_AP_MGR_IP, OID_RF_COUNTRY, OID_CAPWAP]
         oids_to_fetch = fast_oids + (slow_oids if do_slow else [])
 
-        # ── Per-AP OIDs ───────────────────────────────────────
-        ap_fast_oids: dict[str, str] = {}  # key → oid
-        ap_slow_oids: dict[str, str] = {}
-
-        for idx in self._ap_indexes:
-            ap_fast_oids[f"ap_{idx}_status"]  = f"{OID_AP_STATUS}.{idx}"
-            ap_fast_oids[f"ap_{idx}_clients"] = f"{OID_AP_CLIENTS}.{idx}"
-            ap_fast_oids[f"ap_{idx}_cli_24"]  = f"{OID_AP_CLIENTS_RADIO}.{idx}.0"
-            ap_fast_oids[f"ap_{idx}_cli_5"]   = f"{OID_AP_CLIENTS_RADIO}.{idx}.1"
+        # ── Per-AP OIDs — suffix is the MAC string ─────────────
+        ap_keyed: dict[str, str] = {}  # internal_key → full OID
+        for suffix in self._ap_indexes:
+            slug = mac_suffix_to_slug(suffix)
+            ap_keyed[f"{slug}_status"]  = f"{OID_AP_STATUS}.{suffix}"
+            ap_keyed[f"{slug}_clients"] = f"{OID_AP_CLIENTS}.{suffix}"
+            ap_keyed[f"{slug}_cli_24"]  = f"{OID_AP_CLIENTS_RADIO}.{suffix}.0"
+            ap_keyed[f"{slug}_cli_5"]   = f"{OID_AP_CLIENTS_RADIO}.{suffix}.1"
             if do_slow:
-                ap_slow_oids[f"ap_{idx}_name"]    = f"{OID_AP_NAME}.{idx}"
-                ap_slow_oids[f"ap_{idx}_model"]   = f"{OID_AP_MODEL}.{idx}"
-                ap_slow_oids[f"ap_{idx}_ip"]      = f"{OID_AP_IP}.{idx}"
-                ap_slow_oids[f"ap_{idx}_ch24"]    = f"{OID_AP_CHANNEL}.{idx}.0"
-                ap_slow_oids[f"ap_{idx}_ch5"]     = f"{OID_AP_CHANNEL}.{idx}.1"
-                ap_slow_oids[f"ap_{idx}_tx24"]    = f"{OID_AP_TXPOWER}.{idx}.0"
-                ap_slow_oids[f"ap_{idx}_tx5"]     = f"{OID_AP_TXPOWER}.{idx}.1"
+                ap_keyed[f"{slug}_name"]  = f"{OID_AP_NAME}.{suffix}"
+                ap_keyed[f"{slug}_model"] = f"{OID_AP_MODEL}.{suffix}"
+                ap_keyed[f"{slug}_ip"]    = f"{OID_AP_IP}.{suffix}"
+                ap_keyed[f"{slug}_ch24"]  = f"{OID_AP_CHANNEL}.{suffix}.0"
+                ap_keyed[f"{slug}_ch5"]   = f"{OID_AP_CHANNEL}.{suffix}.1"
+                ap_keyed[f"{slug}_tx24"]  = f"{OID_AP_TXPOWER}.{suffix}.0"
+                ap_keyed[f"{slug}_tx5"]   = f"{OID_AP_TXPOWER}.{suffix}.1"
 
-        # ── Per-SSID OIDs ─────────────────────────────────────
-        ssid_fast_oids: dict[str, str] = {}
-        ssid_slow_oids: dict[str, str] = {}
-
+        # ── Per-SSID OIDs ──────────────────────────────────────
+        ssid_keyed: dict[str, str] = {}
         for idx in self._ssid_indexes:
-            ssid_fast_oids[f"ssid_{idx}_clients"] = f"{OID_SSID_CLIENTS}.{idx}"
+            ssid_keyed[f"ssid_{idx}_clients"] = f"{OID_SSID_CLIENTS}.{idx}"
             if do_slow:
-                ssid_slow_oids[f"ssid_{idx}_name"]     = f"{OID_SSID_NAME}.{idx}"
-                ssid_slow_oids[f"ssid_{idx}_vlan"]     = f"{OID_SSID_VLAN}.{idx}"
-                ssid_slow_oids[f"ssid_{idx}_security"] = f"{OID_SSID_SECURITY}.{idx}"
-                ssid_slow_oids[f"ssid_{idx}_band"]     = f"{OID_SSID_BAND}.{idx}"
+                ssid_keyed[f"ssid_{idx}_name"]     = f"{OID_SSID_NAME}.{idx}"
+                ssid_keyed[f"ssid_{idx}_vlan"]     = f"{OID_SSID_VLAN}.{idx}"
+                ssid_keyed[f"ssid_{idx}_security"] = f"{OID_SSID_SECURITY}.{idx}"
+                ssid_keyed[f"ssid_{idx}_band"]     = f"{OID_SSID_BAND}.{idx}"
 
-        # ── Fetch in parallel ─────────────────────────────────
-        all_keyed_oids = {**ap_fast_oids, **ssid_fast_oids}
-        if do_slow:
-            all_keyed_oids.update(ap_slow_oids)
-            all_keyed_oids.update(ssid_slow_oids)
+        all_keyed = {**ap_keyed, **ssid_keyed}
 
+        # ── Fetch in parallel ──────────────────────────────────
         system_vals, keyed_vals = await asyncio.gather(
             self._client.get_many(oids_to_fetch),
-            self._client.get_many(list(all_keyed_oids.values())),
+            self._client.get_many(list(all_keyed.values())),
         )
 
-        # Map keyed values back by key
-        keyed = {}
-        for key, oid in all_keyed_oids.items():
-            keyed[key] = keyed_vals.get(oid)
+        # Map back internal_key → value
+        kv: dict[str, str | None] = {}
+        for key, oid in all_keyed.items():
+            kv[key] = keyed_vals.get(oid)
 
-        # ── Parse system data ─────────────────────────────────
-        cpu       = _safe_float(system_vals.get(OID_CPU))
+        # ── Parse system ───────────────────────────────────────
+        cpu      = _safe_float(system_vals.get(OID_CPU))
         mem_free  = _safe_int(system_vals.get(OID_MEM_FREE))
         mem_total = _safe_int(system_vals.get(OID_MEM_TOTAL))
         mem_pct   = round(((mem_total - mem_free) / mem_total) * 100, 1) if mem_total > 0 else 0.0
-        flash     = _safe_float(system_vals.get(OID_FLASH))
-        temp      = _safe_float(system_vals.get(OID_TEMPERATURE))
-        clients   = _safe_int(system_vals.get(OID_CLIENTS_TOTAL))
+        flash    = _safe_float(system_vals.get(OID_FLASH))
+        temp     = _safe_float(system_vals.get(OID_TEMPERATURE))
+        clients  = _safe_int(system_vals.get(OID_CLIENTS_TOTAL))
 
         uptime_raw = system_vals.get(OID_SYS_UPTIME)
         uptime = _parse_uptime(uptime_raw) if uptime_raw else {"formatted": "—", "seconds": 0}
 
-        firmware = _parse_firmware(system_vals.get(OID_SYS_DESCR, ""))
-        sys_name = system_vals.get(OID_SYS_NAME, "WLC-CT2504")
-        serial   = system_vals.get(OID_SERIAL, "—")
-        mgmt_ip  = system_vals.get(OID_MGMT_IP, "—")
-        ap_mgr   = system_vals.get(OID_AP_MGR_IP, "—")
+        firmware   = _parse_firmware(system_vals.get(OID_SYS_DESCR, ""))
+        sys_name   = system_vals.get(OID_SYS_NAME, "WLC-CT2504")
+        serial     = system_vals.get(OID_SERIAL, "—")
+        mgmt_ip    = system_vals.get(OID_MGMT_IP, "—")
+        ap_mgr     = system_vals.get(OID_AP_MGR_IP, "—")
         capwap_raw = system_vals.get(OID_CAPWAP, "0")
-        capwap   = "Enabled" if capwap_raw == "1" else "Disabled"
+        capwap     = "Enabled" if capwap_raw == "1" else "Disabled"
         rf_country = system_vals.get(OID_RF_COUNTRY, "—")
 
-        # ── Parse AP data ─────────────────────────────────────
-        aps: dict[int, dict] = {}
-        for idx in self._ap_indexes:
-            status_raw = keyed.get(f"ap_{idx}_status", "2")
-            aps[idx] = {
-                "name":    keyed.get(f"ap_{idx}_name",  f"AP-{idx}"),
-                "model":   keyed.get(f"ap_{idx}_model", "—"),
-                "ip":      keyed.get(f"ap_{idx}_ip",    "—"),
+        # ── Parse APs ──────────────────────────────────────────
+        aps: dict[str, dict] = {}
+        for suffix in self._ap_indexes:
+            slug = mac_suffix_to_slug(suffix)
+            status_raw = kv.get(f"{slug}_status", "2") or "2"
+            aps[suffix] = {
+                "slug":    slug,
+                "mac":     mac_suffix_to_display(suffix),
+                "name":    kv.get(f"{slug}_name") or f"AP-{mac_suffix_to_display(suffix)}",
+                "model":   kv.get(f"{slug}_model") or "—",
+                "ip":      kv.get(f"{slug}_ip")    or "—",
                 "status":  AP_STATUS_MAP.get(status_raw, "down"),
-                "clients": _safe_int(keyed.get(f"ap_{idx}_clients")),
-                "cli_24":  _safe_int(keyed.get(f"ap_{idx}_cli_24")),
-                "cli_5":   _safe_int(keyed.get(f"ap_{idx}_cli_5")),
-                "ch24":    keyed.get(f"ap_{idx}_ch24", "—"),
-                "ch5":     keyed.get(f"ap_{idx}_ch5",  "—"),
-                "tx24":    keyed.get(f"ap_{idx}_tx24", "—"),
-                "tx5":     keyed.get(f"ap_{idx}_tx5",  "—"),
+                "clients": _safe_int(kv.get(f"{slug}_clients")),
+                "cli_24":  _safe_int(kv.get(f"{slug}_cli_24")),
+                "cli_5":   _safe_int(kv.get(f"{slug}_cli_5")),
+                "ch24":    kv.get(f"{slug}_ch24") or "—",
+                "ch5":     kv.get(f"{slug}_ch5")  or "—",
+                "tx24":    kv.get(f"{slug}_tx24") or "—",
+                "tx5":     kv.get(f"{slug}_tx5")  or "—",
             }
 
-        ap_up   = sum(1 for ap in aps.values() if ap["status"] == "associated")
-        ap_down = len(aps) - ap_up
-
-        # Clients per radio (aggregate from APs)
+        ap_up      = sum(1 for ap in aps.values() if ap["status"] == "associated")
+        ap_down    = len(aps) - ap_up
         clients_24 = sum(ap["cli_24"] for ap in aps.values())
         clients_5  = sum(ap["cli_5"]  for ap in aps.values())
 
-        # ── Parse SSID data ───────────────────────────────────
+        # ── Parse SSIDs ────────────────────────────────────────
         ssids: dict[int, dict] = {}
         for idx in self._ssid_indexes:
-            sec_raw  = keyed.get(f"ssid_{idx}_security", "4")
-            band_raw = keyed.get(f"ssid_{idx}_band", "0")
+            sec_raw  = kv.get(f"ssid_{idx}_security") or "4"
+            band_raw = kv.get(f"ssid_{idx}_band")     or "0"
             ssids[idx] = {
-                "name":     keyed.get(f"ssid_{idx}_name", f"WLAN-{idx}"),
-                "clients":  _safe_int(keyed.get(f"ssid_{idx}_clients")),
-                "vlan":     keyed.get(f"ssid_{idx}_vlan", "—"),
+                "name":     kv.get(f"ssid_{idx}_name") or f"WLAN-{idx}",
+                "clients":  _safe_int(kv.get(f"ssid_{idx}_clients")),
+                "vlan":     kv.get(f"ssid_{idx}_vlan") or "—",
                 "security": SSID_SECURITY_MAP.get(sec_raw, "WPA2"),
                 "band":     SSID_BAND_MAP.get(band_raw, "dual"),
             }
 
         return {
-            # System
-            "cpu":        cpu,
-            "memory":     mem_pct,
-            "flash":      flash,
-            "temperature": temp,
-            "uptime":     uptime,
-            "firmware":   firmware,
-            "sys_name":   sys_name,
-            "serial":     serial,
-            "mgmt_ip":    mgmt_ip,
-            "ap_mgr_ip":  ap_mgr,
-            "capwap":     capwap,
+            "cpu": cpu, "memory": mem_pct, "flash": flash,
+            "temperature": temp, "uptime": uptime,
+            "firmware": firmware, "sys_name": sys_name,
+            "serial": serial, "mgmt_ip": mgmt_ip,
+            "ap_mgr_ip": ap_mgr, "capwap": capwap,
             "rf_country": rf_country,
-            # Clients
             "clients_total": clients,
-            "clients_24":    clients_24,
-            "clients_5":     clients_5,
-            # APs
+            "clients_24": clients_24,
+            "clients_5": clients_5,
             "ap_total": len(aps),
-            "ap_up":    ap_up,
-            "ap_down":  ap_down,
-            "aps":      aps,
-            # SSIDs
+            "ap_up": ap_up,
+            "ap_down": ap_down,
+            "aps": aps,
             "ssid_total": len(ssids),
-            "ssids":      ssids,
+            "ssids": ssids,
         }
 
     @property
-    def ap_indexes(self) -> list[int]:
+    def ap_indexes(self) -> list[str]:
         return self._ap_indexes
 
     @property
