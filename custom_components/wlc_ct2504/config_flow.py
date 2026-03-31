@@ -85,6 +85,7 @@ class WlcConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._port      = port
                     self._name      = name
 
+                    coordinator = WlcDataCoordinator(self.hass, client)
                     self._ap_indexes, self._ssid_indexes = await coordinator.discover()
 
                     if not self._ap_indexes:
