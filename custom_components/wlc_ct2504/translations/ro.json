@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cisco WLC CT2504 — Conectare",
+        "description": "Introdu datele de acces SNMP ale controller-ului tău wireless.\n\nAsigură-te că SNMP v2c este activat pe WLC:\n`config snmp community create public`\n`config snmp version v2c enable`",
+        "data": {
+          "host": "Adresă IP WLC",
+          "community": "SNMP Community String",
+          "port": "Port SNMP",
+          "name": "Nume dispozitiv"
+        },
+        "data_description": {
+          "host": "IP-ul de management al WLC-ului (ex: 192.168.1.10)",
+          "community": "SNMP community read-only (ex: public)",
+          "port": "Portul SNMP (implicit 161)",
+          "name": "Nume afișat în Home Assistant"
+        }
+      },
+      "discovery": {
+        "title": "Descoperire completă ✓",
+        "description": "Conectat cu succes la **{name}**.\n\n**Detectat:**\n- 🔵 **{ap_count} Access Points** ({ap_list})\n- 📡 **{ssid_count} SSID-uri** ({ssid_list})\n\nApasă **Trimite** pentru a crea toate entitățile în Home Assistant."
+      }
+    },
+    "error": {
+      "cannot_connect": "Nu se poate conecta la WLC. Verifică IP-ul și că SNMP este activat.",
+      "invalid_auth": "Community string incorect sau acces refuzat de ACL-ul WLC.",
+      "snmp_timeout": "Timeout SNMP — verifică că SNMP v2c este activat pe WLC.",
+      "no_aps_found": "Conectat cu succes dar nu s-au detectat AP-uri. Verifică că WLC-ul are AP-uri înregistrate.",
+      "unknown": "Eroare neașteptată. Verifică log-urile Home Assistant pentru detalii."
+    },
+    "abort": {
+      "already_configured": "Acest WLC ({host}) este deja configurat în Home Assistant.",
+      "single_instance_allowed": "O singură instanță per WLC este permisă."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opțiuni WLC CT2504",
+        "data": {
+          "scan_interval": "Interval polling sistem (secunde)",
+          "scan_interval_clients": "Interval polling clienți (secunde)",
+          "community": "SNMP Community String"
+        },
+        "data_description": {
+          "scan_interval": "Cât de des se citesc CPU, memorie etc. (10–300s)",
+          "scan_interval_clients": "Cât de des se citesc clienții conectați (5–120s)"
+        }
+      }
+    }
+  }
+}

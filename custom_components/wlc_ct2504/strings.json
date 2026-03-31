@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cisco WLC CT2504 — Conectare",
+        "description": "Introdu datele de acces SNMP ale controller-ului tău wireless.",
+        "data": {
+          "host": "Adresă IP WLC",
+          "community": "SNMP Community String",
+          "snmp_version": "Versiune SNMP",
+          "port": "Port SNMP",
+          "name": "Nume dispozitiv"
+        },
+        "data_description": {
+          "host": "IP-ul de management al WLC-ului (ex: 192.168.1.10)",
+          "community": "SNMP community read-only (ex: public)",
+          "snmp_version": "Versiunea SNMP configurată pe WLC",
+          "port": "Portul SNMP (implicit 161)",
+          "name": "Nume afișat în Home Assistant"
+        }
+      },
+      "discovery": {
+        "title": "Descoperire dispozitive",
+        "description": "Se scanează WLC-ul pentru AP-uri și SSID-uri... **{ap_count} AP-uri** și **{ssid_count} SSID-uri** detectate.\n\nConfirmă pentru a crea entitățile în Home Assistant."
+      }
+    },
+    "error": {
+      "cannot_connect": "Nu se poate conecta la WLC. Verifică IP-ul și SNMP.",
+      "invalid_auth": "Community string incorect sau acces refuzat.",
+      "snmp_timeout": "Timeout SNMP — verifică că SNMP este activat pe WLC.",
+      "unknown": "Eroare neașteptată. Verifică log-urile HA.",
+      "no_aps_found": "Nu s-au detectat AP-uri pe acest WLC."
+    },
+    "abort": {
+      "already_configured": "Acest WLC este deja configurat în Home Assistant.",
+      "single_instance_allowed": "O singură instanță per WLC este permisă."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opțiuni WLC CT2504",
+        "data": {
+          "scan_interval": "Interval polling (secunde)",
+          "scan_interval_clients": "Interval polling clienți (secunde)",
+          "community": "SNMP Community String"
+        }
+      }
+    }
+  }
+}

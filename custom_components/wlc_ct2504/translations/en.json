@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cisco WLC CT2504 — Connect",
+        "description": "Enter the SNMP access details for your Cisco Wireless LAN Controller.\n\nMake sure SNMP v2c is enabled on the WLC:\n`config snmp community create public`\n`config snmp version v2c enable`",
+        "data": {
+          "host": "WLC IP Address",
+          "community": "SNMP Community String",
+          "port": "SNMP Port",
+          "name": "Device Name"
+        },
+        "data_description": {
+          "host": "Management IP of your WLC (e.g. 192.168.1.10)",
+          "community": "Read-only SNMP community (e.g. public)",
+          "port": "SNMP port (default 161)",
+          "name": "Friendly name shown in Home Assistant"
+        }
+      },
+      "discovery": {
+        "title": "Discovery Complete ✓",
+        "description": "Successfully connected to **{name}**.\n\n**Found:**\n- 🔵 **{ap_count} Access Points** ({ap_list})\n- 📡 **{ssid_count} SSIDs** ({ssid_list})\n\nClick **Submit** to create all entities in Home Assistant."
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to WLC. Check the IP address and that SNMP is enabled.",
+      "invalid_auth": "Wrong community string or access denied by WLC ACL.",
+      "snmp_timeout": "SNMP timeout — check that SNMP v2c is enabled on the WLC.",
+      "no_aps_found": "Connected successfully but no APs were found. Check the WLC has registered APs.",
+      "unknown": "Unexpected error. Check Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "This WLC ({host}) is already configured in Home Assistant.",
+      "single_instance_allowed": "Only one instance per WLC is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WLC CT2504 Options",
+        "data": {
+          "scan_interval": "System poll interval (seconds)",
+          "scan_interval_clients": "Client count poll interval (seconds)",
+          "community": "SNMP Community String"
+        },
+        "data_description": {
+          "scan_interval": "How often to poll system stats like CPU and memory (10–300s)",
+          "scan_interval_clients": "How often to poll connected client counts (5–120s)"
+        }
+      }
+    }
+  }
+}
