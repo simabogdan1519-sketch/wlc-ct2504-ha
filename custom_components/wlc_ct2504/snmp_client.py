@@ -1,37 +1,49 @@
-"""SNMP client helper for Cisco WLC CT2504.
+"""SNMP client for Cisco WLC CT2504 — built on puresnmp.
 
-pysnmp 6.x breaking change: UdpTransportTarget MUST be created with
-    await UdpTransportTarget.create(...)
-NOT with UdpTransportTarget(...) directly.
+Replaces pysnmp which has multiple breaking changes on Python 3.14 / HA 2024+:
+  - UdpTransportTarget() constructor removed (must use await .create())
+  - .create() raises NotImplementedError on _resolve_address in HA event loop
+  - Blocking MIB I/O on SnmpEngine() init
 
-Also: SnmpEngine() does blocking MIB file I/O — offloaded to executor.
+puresnmp is a clean async-native SNMP v2c library with no MIB loading,
+no event loop issues, and straightforward value extraction.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
+from typing import Any
 
-from pysnmp.hlapi.asyncio import (
-    CommunityData,
-    ContextData,
-    ObjectIdentity,
-    ObjectType,
-    SnmpEngine,
-    UdpTransportTarget,
-    getCmd,
-    nextCmd,
-)
+from puresnmp import Client
+from puresnmp.credentials import V2C
+from puresnmp.exc import NoSuchOID, Timeout, SnmpError
+from x690.types import OctetString, Integer, ObjectIdentifier
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _make_engine() -> SnmpEngine:
-    """Instantiate SnmpEngine — blocking MIB I/O, must run in executor."""
-    return SnmpEngine()
+def _to_str(val: Any) -> str | None:
+    """Convert a puresnmp/x690 value to a plain Python string."""
+    if val is None:
+        return None
+    # x690 types all have .pythonize() or .value
+    raw = val.pythonize() if hasattr(val, "pythonize") else val
+    if isinstance(raw, bytes):
+        # Try UTF-8, fall back to hex representation
+        try:
+            decoded = raw.decode("utf-8").strip()
+            # If it looks like a hex dump (non-printable), return hex
+            if any(ord(c) < 32 and c not in "\r\n\t" for c in decoded):
+                return raw.hex()
+            return decoded
+        except UnicodeDecodeError:
+            return raw.hex()
+    if isinstance(raw, int):
+        return str(raw)
+    return str(raw)
 
 
 class SnmpClient:
-    """Async SNMP v2c client — pysnmp 6.x / Python 3.14 compatible."""
+    """Async SNMP v2c client — uses puresnmp (Python 3.14 / HA compatible)."""
 
     def __init__(
         self,
@@ -46,102 +58,72 @@ class SnmpClient:
         self._port = port
         self._timeout = timeout
         self._retries = retries
-        self._engine: SnmpEngine | None = None
 
-    async def _get_engine(self) -> SnmpEngine:
-        """Lazy SnmpEngine via executor — avoids blocking the event loop."""
-        if self._engine is None:
-            loop = asyncio.get_event_loop()
-            self._engine = await loop.run_in_executor(None, _make_engine)
-        return self._engine
-
-    async def _transport(self) -> UdpTransportTarget:
-        """Create transport via async factory (required by pysnmp 6.x)."""
-        return await UdpTransportTarget.create(
-            (self._host, self._port),
-            timeout=self._timeout,
-            retries=self._retries,
+    def _client(self) -> Client:
+        return Client(
+            self._host,
+            V2C(self._community),
+            port=self._port,
         )
-
-    def _community_data(self) -> CommunityData:
-        return CommunityData(self._community, mpModel=1)  # 1 = SNMPv2c
 
     async def get(self, oid: str) -> str | None:
-        """GET single OID. Returns string or None."""
-        engine    = await self._get_engine()
-        transport = await self._transport()
-
-        error_indication, error_status, _, var_binds = await getCmd(
-            engine,
-            self._community_data(),
-            transport,
-            ContextData(),
-            ObjectType(ObjectIdentity(oid)),
-        )
-        if error_indication:
-            _LOGGER.debug("SNMP GET error [%s]: %s", oid, error_indication)
+        """GET a single OID. Returns string or None."""
+        client = self._client()
+        try:
+            val = await client.get(oid)
+            return _to_str(val)
+        except NoSuchOID:
             return None
-        if error_status:
-            _LOGGER.debug("SNMP GET status [%s]: %s", oid, error_status.prettyPrint())
+        except Timeout:
+            _LOGGER.debug("SNMP GET timeout [%s@%s]", oid, self._host)
             return None
-        if not var_binds:
+        except SnmpError as err:
+            _LOGGER.debug("SNMP GET error [%s]: %s", oid, err)
             return None
-        raw = var_binds[0][1].prettyPrint()
-        return None if ("No Such" in raw or "No more" in raw) else raw
+        except Exception as err:
+            _LOGGER.debug("SNMP GET unexpected [%s]: %s", oid, err)
+            return None
 
     async def get_many(self, oids: list[str]) -> dict[str, str | None]:
-        """GET multiple OIDs in one request."""
+        """GET multiple OIDs in one request (multiget)."""
         if not oids:
             return {}
-        engine    = await self._get_engine()
-        transport = await self._transport()
-        obj_types = [ObjectType(ObjectIdentity(o)) for o in oids]
-
-        error_indication, error_status, _, var_binds = await getCmd(
-            engine,
-            self._community_data(),
-            transport,
-            ContextData(),
-            *obj_types,
-        )
-        if error_indication or error_status:
-            _LOGGER.debug("SNMP GET_MANY error: %s %s", error_indication, error_status)
+        client = self._client()
+        try:
+            results = await client.multiget(oids)
+            return {
+                oid: _to_str(val)
+                for oid, val in zip(oids, results)
+            }
+        except Timeout:
+            _LOGGER.debug("SNMP multiget timeout [%s]", self._host)
+            return {oid: None for oid in oids}
+        except SnmpError as err:
+            _LOGGER.debug("SNMP multiget error: %s", err)
+            return {oid: None for oid in oids}
+        except Exception as err:
+            _LOGGER.debug("SNMP multiget unexpected: %s", err)
             return {oid: None for oid in oids}
 
-        result: dict[str, str | None] = {}
-        for oid, (_, val) in zip(oids, var_binds):
-            raw = val.prettyPrint()
-            result[oid] = None if ("No Such" in raw or "No more" in raw) else raw
-        return result
-
     async def walk(self, base_oid: str) -> dict[str, str]:
-        """SNMP walk. Returns {suffix: value} dict."""
-        engine    = await self._get_engine()
-        transport = await self._transport()
+        """SNMP walk. Returns {suffix: value} where suffix follows base_oid."""
+        client = self._client()
         results: dict[str, str] = {}
-
-        async for (error_indication, error_status, _, var_binds) in nextCmd(
-            engine,
-            self._community_data(),
-            transport,
-            ContextData(),
-            ObjectType(ObjectIdentity(base_oid)),
-            lexicographicMode=False,
-        ):
-            if error_indication:
-                _LOGGER.debug("SNMP WALK error [%s]: %s", base_oid, error_indication)
-                break
-            if error_status:
-                _LOGGER.debug("SNMP WALK status [%s]: %s", base_oid, error_status)
-                break
-            for var_bind in var_binds:
-                oid_str = str(var_bind[0])
-                val_str = var_bind[1].prettyPrint()
-                if "No Such" in val_str or "No more" in val_str:
+        prefix = base_oid + "."
+        try:
+            async for oid, val in client.walk(base_oid):
+                oid_str = str(oid)
+                val_str = _to_str(val)
+                if val_str is None:
                     continue
-                prefix = base_oid + "."
                 suffix = oid_str[len(prefix):] if oid_str.startswith(prefix) else oid_str
                 results[suffix] = val_str
+        except Timeout:
+            _LOGGER.debug("SNMP walk timeout [%s@%s]", base_oid, self._host)
+        except SnmpError as err:
+            _LOGGER.debug("SNMP walk error [%s]: %s", base_oid, err)
+        except Exception as err:
+            _LOGGER.debug("SNMP walk unexpected [%s]: %s", base_oid, err)
         return results
 
     async def test_connection(self) -> bool:
