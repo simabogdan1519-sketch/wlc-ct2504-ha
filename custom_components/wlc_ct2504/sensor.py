@@ -24,7 +24,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, DEFAULT_NAME
-from .coordinator import WlcDataCoordinator
+from .coordinator import WlcDataCoordinator, mac_suffix_to_display
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ async def async_setup_entry(
         ap_data = {}
         if coordinator.data:
             ap_data = coordinator.data.get("aps", {}).get(ap_suffix, {})
-        ap_name = ap_data.get("name") or f"AP-{ap_suffix}"
+        ap_name = ap_data.get("name") or mac_suffix_to_display(ap_suffix)
         ap_slug = ap_data.get("slug") or f"ap_{ap_suffix.replace('.', '_')}"
 
         for key, label, icon, unit in [
@@ -193,8 +193,8 @@ async def async_setup_entry(
             ("clients", "Clients",      "mdi:account-multiple",  None),
             ("ch24",    "Channel 2.4G", "mdi:wifi",              None),
             ("ch5",     "Channel 5G",   "mdi:wifi",              None),
-            ("tx24",    "TxPower 2.4G", "mdi:signal",            "dBm"),
-            ("tx5",     "TxPower 5G",   "mdi:signal",            "dBm"),
+            ("tx24",    "TxPower 2.4G", "mdi:signal",            None),
+            ("tx5",     "TxPower 5G",   "mdi:signal",            None),
         ]:
             entities.append(
                 WlcApSensor(
