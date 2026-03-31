@@ -142,6 +142,8 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         self._ap_indexes: list[str] = ap_indexes or []
         self._ssid_indexes: list[int] = ssid_indexes or []
         self._slow_counter = 0
+        # Cache for slow-polled values — persists between fast cycles so UI never flickers
+        self._slow_cache: dict[str, str | None] = {}
 
     async def discover(self) -> tuple[list[str], list[int]]:
         _LOGGER.info("WLC: Starting SNMP discovery...")
@@ -209,9 +211,18 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             self._client.get_many(list(all_keyed.values())),
         )
 
-        kv: dict[str, str | None] = {
-            key: keyed_vals.get(oid) for key, oid in all_keyed.items()
-        }
+        # Build kv — for slow keys, update cache only when do_slow=True,
+        # otherwise fall back to cached value so data never disappears mid-cycle
+        kv: dict[str, str | None] = {}
+        for key, oid in all_keyed.items():
+            val = keyed_vals.get(oid)
+            if val is not None:
+                kv[key] = val
+                self._slow_cache[key] = val  # always update cache on fresh data
+            elif key in self._slow_cache:
+                kv[key] = self._slow_cache[key]  # use last known value
+            else:
+                kv[key] = None
 
         # ── System data ───────────────────────────────────────
         cpu       = _safe_float(sys_vals.get(OID_CPU))
@@ -226,6 +237,15 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         # Temperature — may be empty string on some firmware
         temp_raw = sys_vals.get(OID_TEMPERATURE) or ""
         temp = _safe_float(temp_raw.strip()) if temp_raw.strip() else 0.0
+
+        # Merge slow system OIDs with cache
+        for oid in [OID_SYS_DESCR, OID_SYS_UPTIME, OID_SYS_NAME, OID_SERIAL,
+                    OID_TEMPERATURE, OID_AP_MGR_IP, OID_CAPWAP]:
+            v = sys_vals.get(oid)
+            if v is not None:
+                self._slow_cache[f'sys_{oid}'] = v
+            elif f'sys_{oid}' in self._slow_cache and oid not in sys_vals:
+                sys_vals[oid] = self._slow_cache[f'sys_{oid}']
 
         uptime = _parse_uptime(sys_vals.get(OID_SYS_UPTIME))
         firmware = _parse_firmware(sys_vals.get(OID_SYS_DESCR))
