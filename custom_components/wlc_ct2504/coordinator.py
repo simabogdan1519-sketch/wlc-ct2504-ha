@@ -31,11 +31,27 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _parse_firmware(sys_descr: str) -> str:
-    """Extract firmware version from sysDescr string."""
+    """Extract firmware version from sysDescr string.
+
+    HA states are limited to 255 chars. sysDescr is multiline and often
+    several hundred bytes — always extract just the version number.
+    The raw value may arrive as a hex string (0x...) from pysnmp when
+    the OctetString contains non-ASCII bytes (CRLF etc.).
+    """
     if not sys_descr:
         return "Unknown"
+    # pysnmp sometimes returns hex-encoded strings starting with 0x
+    if sys_descr.startswith("0x"):
+        try:
+            sys_descr = bytes.fromhex(sys_descr[2:]).decode("ascii", errors="replace")
+        except Exception:
+            pass
     match = re.search(r"Version\s+([\d.]+)", sys_descr)
-    return match.group(1) if match else sys_descr[:40]
+    if match:
+        return match.group(1)[:50]  # version string only, max 50 chars
+    # Fallback: first non-empty line, truncated
+    first_line = sys_descr.split("\n")[0].strip()[:50]
+    return first_line or "Unknown"
 
 
 def _parse_uptime(ticks_str: str) -> dict:
