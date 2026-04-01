@@ -235,6 +235,36 @@ async def async_setup_entry(
                 )
             )
 
+
+    # ── Per-Port sensors ──────────────────────────────────────
+    from .const import PORT_INDEXES
+    for port_idx in PORT_INDEXES:
+        port_data = {}
+        if coordinator.data:
+            port_data = coordinator.data.get("ports", {}).get(port_idx, {})
+        port_name = port_data.get("name") or f"Port {port_idx}"
+
+        for key, label, icon, unit in [
+            ("status",     "Status",    "mdi:ethernet",          None),
+            ("speed",      "Speed",     "mdi:speedometer",       None),
+            ("in_octets",  "RX Bytes",  "mdi:arrow-down-circle", "B"),
+            ("out_octets", "TX Bytes",  "mdi:arrow-up-circle",   "B"),
+            ("in_errors",  "RX Errors", "mdi:alert-circle",      None),
+        ]:
+            entities.append(
+                WlcPortSensor(
+                    coordinator=coordinator,
+                    port_idx=port_idx,
+                    data_key=key,
+                    entity_key=f"port_{port_idx}_{key}",
+                    name=f"{port_name} {label}",
+                    icon=icon,
+                    unit=unit,
+                    device_info=device_info,
+                    device_name=device_name,
+                )
+            )
+
     async_add_entities(entities)
 
 
@@ -391,3 +421,44 @@ class WlcSsidSensor(WlcBaseEntity):
                 "security":  ssid.get("security"),
             }
         return {}
+
+# ── PORT SENSOR ───────────────────────────────────────────────────
+
+class WlcPortSensor(WlcBaseEntity):
+    def __init__(
+        self,
+        coordinator: WlcDataCoordinator,
+        port_idx: int,
+        data_key: str,
+        entity_key: str,
+        name: str,
+        icon: str,
+        unit: str | None,
+        device_info: DeviceInfo,
+        device_name: str,
+    ) -> None:
+        super().__init__(coordinator, entity_key, device_info, device_name)
+        self._port_idx  = port_idx
+        self._data_key  = data_key
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        if unit == "B":
+            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    @property
+    def native_value(self) -> Any:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("ports", {}).get(self._port_idx, {}).get(self._data_key)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        if not self.coordinator.data or self._data_key != "status":
+            return {}
+        port = self.coordinator.data.get("ports", {}).get(self._port_idx, {})
+        return {
+            "speed":      port.get("speed", "—"),
+            "in_errors":  port.get("in_errors", 0),
+        }
+
