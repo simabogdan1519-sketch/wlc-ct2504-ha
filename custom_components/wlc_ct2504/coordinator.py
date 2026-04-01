@@ -50,6 +50,38 @@ def mac_suffix_to_display(suffix: str) -> str:
         return suffix
 
 
+def _decode_hex_ip(val: str | None) -> str:
+    """Decode 'c0a864d2' → '192.168.100.210', pass through dotted IPs."""
+    if not val:
+        return "—"
+    if '.' in val:
+        return val  # already dotted
+    try:
+        if len(val) == 8:
+            b = bytes.fromhex(val)
+            return '.'.join(str(x) for x in b)
+    except Exception:
+        pass
+    return val
+
+
+def _fmt_mac(val: str | None) -> str:
+    """Format 'c08c60c74000' → 'C0:8C:60:C7:40:00'."""
+    if not val:
+        return "—"
+    # Already formatted with separators
+    if ':' in val or '-' in val:
+        return val.upper().replace('-', ':')
+    # Hex string without separators
+    try:
+        clean = val.replace(':', '').replace('-', '')
+        if len(clean) == 12:
+            return ':'.join(clean[i:i+2].upper() for i in range(0, 12, 2))
+    except Exception:
+        pass
+    return val
+
+
 def _parse_uptime(raw: str | None) -> dict:
     """Parse '97 hours 16 min (35017400)' — extract ticks from parens."""
     if not raw:
@@ -276,7 +308,7 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         model    = self._cached("model",    sys_vals.get(OID_MODEL))    or "AIR-CT2504-K9"
         sys_name = self._cached("sys_name", sys_vals.get(OID_SYS_NAME)) or "WLC-CT2504"
         serial   = self._cached("serial",   sys_vals.get(OID_SERIAL))   or "—"
-        wlc_mac  = self._cached("wlc_mac",  sys_vals.get(OID_WLC_MAC))  or "—"
+        wlc_mac  = _fmt_mac(self._cached("wlc_mac",  sys_vals.get(OID_WLC_MAC)))
 
         clients_assoc = _safe_int(sys_vals.get(OID_CLIENTS_ASSOC))
         clients_auth  = _safe_int(sys_vals.get(OID_CLIENTS_AUTH))
