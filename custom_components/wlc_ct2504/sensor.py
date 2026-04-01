@@ -63,15 +63,7 @@ SYSTEM_SENSORS: tuple[WlcSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:harddisk",
     ),
-    WlcSensorEntityDescription(
-        key="temperature",
-        data_key="temperature",
-        name="Temperature",
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:thermometer",
-    ),
+
     WlcSensorEntityDescription(
         key="uptime",
         data_key="uptime",
@@ -245,11 +237,11 @@ async def async_setup_entry(
         port_name = port_data.get("name") or f"Port {port_idx}"
 
         for key, label, icon, unit in [
-            ("status",     "Status",    "mdi:ethernet",          None),
-            ("speed",      "Speed",     "mdi:speedometer",       None),
-            ("in_octets",  "RX Bytes",  "mdi:arrow-down-circle", "B"),
-            ("out_octets", "TX Bytes",  "mdi:arrow-up-circle",   "B"),
-            ("in_errors",  "RX Errors", "mdi:alert-circle",      None),
+            ("status",    "Status",    "mdi:ethernet",          None),
+            ("speed",     "Speed",     "mdi:speedometer",       None),
+            ("rx_mbps",   "RX Mbps",   "mdi:arrow-down-circle", "Mbit/s"),
+            ("tx_mbps",   "TX Mbps",   "mdi:arrow-up-circle",   "Mbit/s"),
+            ("in_errors", "RX Errors", "mdi:alert-circle",      None),
         ]:
             entities.append(
                 WlcPortSensor(
@@ -445,6 +437,8 @@ class WlcPortSensor(WlcBaseEntity):
         self._attr_native_unit_of_measurement = unit
         if unit == "B":
             self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+        elif unit in ("Mbit/s", "%"):
+            self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> Any:
