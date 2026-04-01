@@ -20,10 +20,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL_CLIENTS,
     CONF_COMMUNITY,
-    CONF_SNMP_VERSION,
     CONF_SCAN_INTERVAL_CLIENTS,
-    SNMP_VERSION_2C,
-    SNMP_VERSION_OPTIONS,
 )
 from .snmp_client import SnmpClient
 from .coordinator import WlcDataCoordinator, mac_suffix_to_display
