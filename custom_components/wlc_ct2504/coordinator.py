@@ -180,8 +180,6 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             "cpu":          OID_CPU,
             "mem_free":     OID_MEM_FREE,       # KB free memory
             "temperature":  OID_TEMPERATURE,    # raw integer / 10000 = °C
-            "clients":      OID_CLIENTS_ASSOC,
-            "clients_auth": OID_CLIENTS_AUTH,
             "uptime":       OID_SYS_UPTIME,
             "sys_name":     OID_SYS_NAME,
             "serial":       OID_SERIAL,
