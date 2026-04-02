@@ -50,10 +50,19 @@ SYSTEM_SENSORS: tuple[WlcSensorEntityDescription, ...] = (
     WlcSensorEntityDescription(
         key="memory",
         data_key="memory",
-        name="Memory Usage",
-        native_unit_of_measurement=PERCENTAGE,
+        name="Memory Free",
+        native_unit_of_measurement="MB",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:memory",
+    ),
+    WlcSensorEntityDescription(
+        key="temperature",
+        data_key="temperature",
+        name="Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:thermometer",
     ),
     WlcSensorEntityDescription(
         key="flash",
@@ -64,6 +73,15 @@ SYSTEM_SENSORS: tuple[WlcSensorEntityDescription, ...] = (
         icon="mdi:harddisk",
     ),
 
+    WlcSensorEntityDescription(
+        key="temperature",
+        data_key="temperature",
+        name="Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:thermometer",
+    ),
     WlcSensorEntityDescription(
         key="uptime",
         data_key="uptime",

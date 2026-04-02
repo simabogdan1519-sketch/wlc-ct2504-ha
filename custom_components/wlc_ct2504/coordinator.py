@@ -1,8 +1,5 @@
 """DataUpdateCoordinator for Cisco WLC CT2504.
-
-Design: ALL OIDs are fetched every poll cycle via parallel individual GETs.
-No fast/slow split — eliminates the cache complexity that caused UI flickering.
-On local LAN, 60 parallel UDP GETs complete in <500ms easily.
+All OIDs fetched every poll via parallel individual GETs. No fast/slow split.
 """
 from __future__ import annotations
 
@@ -22,11 +19,10 @@ from .const import (
     PORT_INDEXES,
     OID_SYS_NAME, OID_SYS_UPTIME, OID_SERIAL,
     OID_MODEL, OID_FIRMWARE, OID_WLC_MAC,
-    OID_CPU, OID_MEM_FREE, OID_MEM_USED,
+    OID_CPU, OID_MEM_FREE, OID_TEMPERATURE,
     OID_CLIENTS_ASSOC, OID_CLIENTS_AUTH,
     OID_AP_NAME, OID_AP_STATUS, OID_AP_MODEL, OID_AP_IP,
-    OID_AP_CHANNEL, OID_AP_TXPOWER, OID_AP_CLIENTS_RADIO,
-    OID_AP_CHANUTIL,
+    OID_AP_CHANNEL, OID_AP_TXPOWER, OID_AP_CLIENTS_RADIO, OID_AP_CHANUTIL,
     OID_SSID_NAME, OID_SSID_STATUS, OID_SSID_CLIENTS, OID_SSID_VLAN,
     OID_SSID_SECURITY, OID_SSID_BAND,
     OID_IF_NAME, OID_IF_OPER, OID_IF_SPEED,
@@ -36,8 +32,6 @@ from .snmp_client import SnmpClient
 
 _LOGGER = logging.getLogger(__name__)
 
-
-# ── VALUE HELPERS ─────────────────────────────────────────────────────────────
 
 def mac_suffix_to_slug(suffix: str) -> str:
     try:
@@ -142,8 +136,6 @@ def _mbps(delta_bytes: int, delta_secs: float) -> float:
     return round((delta_bytes * 8) / (delta_secs * 1_000_000), 2)
 
 
-# ── COORDINATOR ───────────────────────────────────────────────────────────────
-
 class WlcDataCoordinator(DataUpdateCoordinator):
 
     def __init__(
@@ -173,7 +165,7 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         )
         ap_indexes   = [k for k in ap_names if k]
         ssid_indexes = sorted([int(k) for k in ssid_names if k.isdigit()])
-        _LOGGER.info("WLC discovery: %d APs, %d SSIDs", len(ap_indexes), len(ssid_indexes))
+        _LOGGER.info("WLC: %d APs, %d SSIDs", len(ap_indexes), len(ssid_indexes))
         self._ap_indexes   = ap_indexes
         self._ssid_indexes = ssid_indexes
         return ap_indexes, ssid_indexes
@@ -185,23 +177,20 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"WLC SNMP error: {err}") from err
 
     async def _fetch(self) -> dict[str, Any]:
-        # ── Build complete OID map: key → oid ─────────────────
         oids: dict[str, str] = {
-            # System
-            "cpu":       OID_CPU,
-            "mem_free":  OID_MEM_FREE,
-            "mem_used":  OID_MEM_USED,
-            "clients":   OID_CLIENTS_ASSOC,
+            "cpu":          OID_CPU,
+            "mem_free":     OID_MEM_FREE,       # KB free memory
+            "temperature":  OID_TEMPERATURE,    # raw integer / 10000 = °C
+            "clients":      OID_CLIENTS_ASSOC,
             "clients_auth": OID_CLIENTS_AUTH,
-            "uptime":    OID_SYS_UPTIME,
-            "sys_name":  OID_SYS_NAME,
-            "serial":    OID_SERIAL,
-            "model":     OID_MODEL,
-            "firmware":  OID_FIRMWARE,
-            "wlc_mac":   OID_WLC_MAC,
+            "uptime":       OID_SYS_UPTIME,
+            "sys_name":     OID_SYS_NAME,
+            "serial":       OID_SERIAL,
+            "model":        OID_MODEL,
+            "firmware":     OID_FIRMWARE,
+            "wlc_mac":      OID_WLC_MAC,
         }
 
-        # Per-AP OIDs
         for suffix in self._ap_indexes:
             slug = mac_suffix_to_slug(suffix)
             oids[f"{slug}_status"] = f"{OID_AP_STATUS}.{suffix}"
@@ -217,7 +206,6 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             oids[f"{slug}_u24"]    = f"{OID_AP_CHANUTIL}.{suffix}.0"
             oids[f"{slug}_u5"]     = f"{OID_AP_CHANUTIL}.{suffix}.1"
 
-        # Per-SSID OIDs
         for idx in self._ssid_indexes:
             oids[f"ssid_{idx}_name"]     = f"{OID_SSID_NAME}.{idx}"
             oids[f"ssid_{idx}_clients"]  = f"{OID_SSID_CLIENTS}.{idx}"
@@ -226,7 +214,6 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             oids[f"ssid_{idx}_band"]     = f"{OID_SSID_BAND}.{idx}"
             oids[f"ssid_{idx}_status"]   = f"{OID_SSID_STATUS}.{idx}"
 
-        # Port OIDs
         for i in PORT_INDEXES:
             oids[f"port_{i}_name"]  = f"{OID_IF_NAME}.{i}"
             oids[f"port_{i}_oper"]  = f"{OID_IF_OPER}.{i}"
@@ -235,21 +222,17 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             oids[f"port_{i}_out"]   = f"{OID_IF_OUT_OCTETS}.{i}"
             oids[f"port_{i}_errin"] = f"{OID_IF_IN_ERRORS}.{i}"
 
-        # ── Fetch ALL OIDs in parallel (individual GETs) ──────
+        # Fetch everything in parallel
         raw = await self._client.get_many(list(oids.values()))
-
-        # Map back: key → value
-        v: dict[str, str | None] = {
-            key: raw.get(oid_str)
-            for key, oid_str in oids.items()
-        }
+        v: dict[str, str | None] = {key: raw.get(oid) for key, oid in oids.items()}
 
         # ── System ────────────────────────────────────────────
         cpu      = _float(v["cpu"])
-        mem_free = _int(v["mem_free"])
-        mem_used = _int(v["mem_used"])
-        mem_total = mem_free + mem_used
-        mem_pct  = round((mem_used / mem_total) * 100, 1) if mem_total > 0 else 0.0
+        mem_free = _int(v["mem_free"])   # KB free — display as-is
+
+        # Temperature: raw integer / 10000 = °C (e.g. 434792 / 10000 = 43.4°C)
+        temp_raw = _int(v["temperature"])
+        temperature = round(temp_raw / 10000, 1) if temp_raw > 1000 else float(temp_raw)
 
         uptime   = _parse_uptime(v["uptime"])
         firmware = v["firmware"] or "Unknown"
@@ -314,12 +297,10 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         for i in PORT_INDEXES:
             name_raw = v[f"port_{i}_name"] or f"Port {i}"
             label    = re.sub(r'GigabitEthernet', 'Ge', name_raw)
-
             in_now   = _int(v[f"port_{i}_in"])
             out_now  = _int(v[f"port_{i}_out"])
             in_prev  = self._port_prev.get(f"{i}_in",  in_now)
             out_prev = self._port_prev.get(f"{i}_out", out_now)
-
             ports[i] = {
                 "name":      label,
                 "status":    _port_status(v[f"port_{i}_oper"]),
@@ -334,7 +315,7 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             self._port_prev[f"{i}_out"] = out_now
 
         return {
-            "cpu": cpu, "memory": mem_pct,
+            "cpu": cpu, "memory": mem_free, "temperature": temperature,
             "uptime": uptime, "firmware": firmware, "model": model,
             "sys_name": sys_name, "serial": serial, "wlc_mac": wlc_mac,
             "clients_total": clients_assoc,

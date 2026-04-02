@@ -22,10 +22,9 @@ OID_MODEL          = "1.3.6.1.4.1.14179.1.1.1.3.0"   # "AIR-CT2504-K9"  ✓
 OID_FIRMWARE       = "1.3.6.1.4.1.14179.1.1.1.14.0"  # "8.5.182.0"  ✓ (NOT sysDescr!)
 OID_WLC_MAC        = "1.3.6.1.4.1.14179.1.1.1.9.0"   # "C0-8C-60-C7-40-00"
 
-OID_CPU            = "1.3.6.1.4.1.14179.1.1.5.1.0"   # CPU 5min avg %
-OID_MEM_FREE       = "1.3.6.1.4.1.14179.1.1.5.2.0"   # Free memory KB
-OID_MEM_USED       = "1.3.6.1.4.1.14179.1.1.5.3.0"   # Used memory KB
-OID_TEMPERATURE    = "1.3.6.1.4.1.14179.1.1.6.1.0"   # °C (may be empty string)
+OID_CPU            = "1.3.6.1.4.1.14179.1.1.5.1.0"   # CPU 5min avg % (returns 0 when <1%)
+OID_MEM_FREE       = "1.3.6.1.4.1.14179.1.1.5.2.0"   # Free memory KB (only memory OID available)
+OID_TEMPERATURE    = "1.3.6.1.4.1.14179.1.1.5.3.0"   # Temperature in millidegrees C (/10000 = °C)
 
 # ── CLIENTS ───────────────────────────────────────────────────────────────────
 # .2.6.1.2.0 = 53 (associated clients) ✓ — validated from walk
