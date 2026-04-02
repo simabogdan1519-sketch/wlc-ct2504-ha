@@ -29,8 +29,6 @@ OID_TEMPERATURE    = "1.3.6.1.4.1.14179.1.1.5.3.0"   # Temperature in millidegre
 # ── CLIENTS ───────────────────────────────────────────────────────────────────
 # .2.6.1.2.0 = 53 (associated clients) ✓ — validated from walk
 # .2.6.1.1.0 = 197008 (bytes counter, NOT clients)
-OID_CLIENTS_ASSOC  = "1.3.6.1.4.1.14179.2.6.1.2.0"   # Total associated ✓
-OID_CLIENTS_AUTH   = "1.3.6.1.4.1.14179.2.6.1.3.0"   # Authenticated clients
 
 # ── AP TABLE (index = MAC suffix e.g. 0.167.66.179.98.192) ───────────────────
 OID_AP_NAME    = "1.3.6.1.4.1.14179.2.2.1.1.3"    # AP name string

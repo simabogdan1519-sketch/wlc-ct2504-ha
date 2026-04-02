@@ -20,8 +20,7 @@ from .const import (
     OID_SYS_NAME, OID_SYS_UPTIME, OID_SERIAL,
     OID_MODEL, OID_FIRMWARE, OID_WLC_MAC,
     OID_CPU, OID_MEM_FREE, OID_TEMPERATURE,
-    OID_CLIENTS_ASSOC, OID_CLIENTS_AUTH,
-    OID_AP_NAME, OID_AP_STATUS, OID_AP_MODEL, OID_AP_IP,
+        OID_AP_NAME, OID_AP_STATUS, OID_AP_MODEL, OID_AP_IP,
     OID_AP_CHANNEL, OID_AP_TXPOWER, OID_AP_CLIENTS_RADIO, OID_AP_CHANUTIL,
     OID_SSID_NAME, OID_SSID_STATUS, OID_SSID_CLIENTS, OID_SSID_VLAN,
     OID_SSID_SECURITY, OID_SSID_BAND,
@@ -241,8 +240,7 @@ class WlcDataCoordinator(DataUpdateCoordinator):
         serial   = v["serial"]   or "—"
         wlc_mac  = _fmt_mac(v["wlc_mac"])
 
-        clients_assoc = _int(v["clients"])
-        clients_auth  = _int(v["clients_auth"])
+
 
         # ── APs ───────────────────────────────────────────────
         aps: dict[str, dict] = {}
@@ -318,8 +316,7 @@ class WlcDataCoordinator(DataUpdateCoordinator):
             "cpu": cpu, "memory": mem_free, "temperature": temperature,
             "uptime": uptime, "firmware": firmware, "model": model,
             "sys_name": sys_name, "serial": serial, "wlc_mac": wlc_mac,
-            "clients_total": clients_assoc,
-            "clients_auth":  clients_auth,
+            "clients_total": clients_24 + clients_5,
             "clients_24":    clients_24,
             "clients_5":     clients_5,
             "ap_total": len(aps), "ap_up": ap_up, "ap_down": ap_down,

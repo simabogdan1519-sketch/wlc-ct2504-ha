@@ -64,14 +64,6 @@ SYSTEM_SENSORS: tuple[WlcSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:thermometer",
     ),
-    WlcSensorEntityDescription(
-        key="flash",
-        data_key="flash",
-        name="Flash Usage",
-        native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:harddisk",
-    ),
 
     WlcSensorEntityDescription(
         key="temperature",
@@ -144,20 +136,6 @@ SYSTEM_SENSORS: tuple[WlcSensorEntityDescription, ...] = (
         name="SSID Count",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:access-point-network",
-    ),
-    WlcSensorEntityDescription(
-        key="capwap",
-        data_key="capwap",
-        name="CAPWAP Status",
-        icon="mdi:lan-connect",
-        entity_registry_enabled_default=False,
-    ),
-    WlcSensorEntityDescription(
-        key="rf_country",
-        data_key="rf_country",
-        name="RF Country",
-        icon="mdi:flag-outline",
-        entity_registry_enabled_default=False,
     ),
 )
 
