@@ -1,7 +1,7 @@
 {
   "domain": "wlc_ct2504",
   "name": "Cisco WLC CT2504",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "documentation": "https://github.com/your-repo/wlc-ct2504-ha",
   "issue_tracker": "https://github.com/your-repo/wlc-ct2504-ha/issues",
   "requirements": [],
